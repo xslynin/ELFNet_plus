@@ -13,7 +13,7 @@ IMG_EXTENSIONS = [
 ]
 
 normalization = Compose([Normalize(always_apply=True),
-                         ToTensor(always_apply=True)], p=1.0)
+    ToTensor(always_apply=True)], p=1.0, strict=False)
 
 
 def denormalize(img):
@@ -94,7 +94,7 @@ def augment(input_data, transformation):
             input_data['occ_mask_right'])
     except KeyError:
         # print('No disp mask right, check if dataset is KITTI')
-        input_data['occ_mask_right'] = np.zeros_like(occ_mask).astype(np.bool)
+        input_data['occ_mask_right'] = np.zeros_like(occ_mask).astype(np.bool_)
     input_data.pop('disp_right', None)  # remove disp right after finish
 
     # set occlusion area to 0

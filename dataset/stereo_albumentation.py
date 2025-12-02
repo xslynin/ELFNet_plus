@@ -1,12 +1,16 @@
 import random
 
 import albumentations.augmentations.functional as F
+import albumentations.augmentations as A
 import cv2
 import numpy as np
 import torch
 from albumentations import GaussNoise, RGBShift, RandomBrightnessContrast, ToGray
 from albumentations.core.transforms_interface import BasicTransform
 from torchvision.transforms.functional import resize
+
+
+from albumentations.augmentations.functional import brightness_contrast_adjust
 
 """
 functions that cannot fit in albumentation framework
@@ -105,18 +109,29 @@ def random_crop(min_crop_height, min_crop_width, input_data, split):
     # height, width = input_data['left'].shape[:2]
     height, width = input_data['left'].shape[-2:]
 
-    if min_crop_height >= height or min_crop_width > width:
+    # Calculate valid crop ranges with bounds checking
+    max_crop_height = height - 160
+    max_crop_width = width - 208
+    
+    # Ensure valid ranges for random crop
+    if min_crop_height >= height or min_crop_width >= width:
+        # Image is too small for minimum crop, use full image
         x1 = 0
-        x2 = width - 1
+        x2 = width
         y1 = 0
-        y2 = height - 1
+        y2 = height
+    elif min_crop_height > max_crop_height or min_crop_width > max_crop_width:
+        # Image is too small for the requested crop with margins, use minimum crop
+        crop_height = min_crop_height
+        crop_width = min_crop_width
+        x1, y1, x2, y2 = get_random_crop_coords(
+            height, width, crop_height, crop_width)
     else:
-        crop_height = random.randint(min_crop_height, height-160)
-        crop_width = random.randint(min_crop_width, width-208)
-        # crop_height = min_crop_height
-        # crop_width = min_crop_width
-
-        x1, y1, x2, y2 = width - crop_width, height - crop_height, width, height
+        # Valid range for random crop
+        crop_height = random.randint(min_crop_height, max_crop_height)
+        crop_width = random.randint(min_crop_width, max_crop_width)
+        x1, y1, x2, y2 = get_random_crop_coords(
+            height, width, crop_height, crop_width)
 
     input_data['left'] = crop(input_data['left'], x1, y1, x2, y2)
     input_data['right'] = crop(input_data['right'], x1, y1, x2, y2)
@@ -215,13 +230,17 @@ class StereoTransform(BasicTransform):
             "right": self.apply
         }
 
-    def update_params(self, params, **kwargs):
+    def update_params_shape(self, params, **kwargs):
+        kwargs = kwargs["data"]
         if hasattr(self, "interpolation"):
             params["interpolation"] = self.interpolation
         if hasattr(self, "fill_value"):
             params["fill_value"] = self.fill_value
         params.update(
             {"cols": kwargs["left"].shape[1], "rows": kwargs["right"].shape[0]})
+        return params
+
+    def update_params(self, params, **kwargs):
         return params
 
 
@@ -236,7 +255,8 @@ class RightOnlyTransform(BasicTransform):
             "right": self.apply
         }
 
-    def update_params(self, params, **kwargs):
+    def update_params_shape(self, params, **kwargs):
+        kwargs = kwargs["data"]
         if hasattr(self, "interpolation"):
             params["interpolation"] = self.interpolation
         if hasattr(self, "fill_value"):
@@ -262,15 +282,6 @@ class StereoTransformAsym(BasicTransform):
             "right": self.apply_r
         }
 
-    def update_params(self, params, **kwargs):
-        if hasattr(self, "interpolation"):
-            params["interpolation"] = self.interpolation
-        if hasattr(self, "fill_value"):
-            params["fill_value"] = self.fill_value
-        params.update(
-            {"cols": kwargs["left"].shape[1], "rows": kwargs["right"].shape[0]})
-        return params
-
     @property
     def targets_as_params(self):
         return ["left", "right"]
@@ -278,6 +289,20 @@ class StereoTransformAsym(BasicTransform):
     def asym(self):
         return random.random() < self.p_asym
         # return False
+
+    def update_params_shape(self, params, **kwargs):
+        kwargs = kwargs["data"]
+        if hasattr(self, "interpolation"):
+            params["interpolation"] = self.interpolation
+        if hasattr(self, "fill_value"):
+            params["fill_value"] = self.fill_value
+        params.update(
+            {"cols": kwargs["left"].shape[1], "rows": kwargs["right"].shape[0]})
+        return params
+    
+    def update_params(self, params, **kwargs):
+        return params
+
 
 
 """
@@ -299,7 +324,42 @@ class Normalize(StereoTransform):
     Image types:
         uint8, float32
     """
+    def __init__(
+        self,
+        mean = (0.485, 0.456, 0.406),
+        std = (0.229, 0.224, 0.225),
+        max_pixel_value: float = 255.0,
+        # normalization 参数需要根据 A.Normalize 源码定义来精确指定 Literal 类型
+        normalization = "standard",
+        always_apply = False,
+        p: float = 1.0,
+    ):
+        super().__init__(p=p, always_apply=always_apply)
+        
+        # 关键步骤：在内部创建一个标准的 A.Normalize 实例
+        self.normalizer = A.Normalize(
+            mean=mean,
+            std=std,
+            max_pixel_value=max_pixel_value,
+            normalization=normalization,
+            p=1.0 # p在这里固定为1.0，因为主开关由StereoNormalize的p属性控制
+        )
+        # 将参数存储起来，以便 get_transform_init_args_names 返回正确的参数名
+        self.mean = mean
+        self.std = std
+        self.max_pixel_value = max_pixel_value
+        self.normalization = normalization
 
+    def apply(self, img: np.ndarray, **params) -> np.ndarray:
+        """
+        将 img 传递给内部的 A.Normalize 实例进行处理。
+        """
+        # A.Normalize 的 apply 方法签名与 StereoTransform 的 apply 兼容
+        return self.normalizer.apply(img)
+
+    def get_transform_init_args_names(self):
+        return ("mean", "std", "max_pixel_value")
+""" 
     def __init__(self, mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225), max_pixel_value=255.0, always_apply=False,
                  p=1.0):
         super(Normalize, self).__init__(always_apply, p)
@@ -309,9 +369,7 @@ class Normalize(StereoTransform):
 
     def apply(self, image, **params):
         return F.normalize(image, self.mean, self.std, self.max_pixel_value)
-
-    def get_transform_init_args_names(self):
-        return ("mean", "std", "max_pixel_value")
+"""
 
 
 class ToTensor(StereoTransform):
@@ -363,11 +421,41 @@ class GaussNoiseStereo(StereoTransformAsym, GaussNoise):
         GaussNoise.__init__(self, var_limit, mean, always_apply, p)
 
     def apply_l(self, img, gauss_l=None, **params):
-        return F.gauss_noise(img, gauss=gauss_l)
+        return self.apply(img, gauss=gauss_l)
 
     def apply_r(self, img, gauss_r=None, **params):
-        return F.gauss_noise(img, gauss=gauss_r)
+        return self.apply(img, gauss=gauss_r)
 
+    def get_params_dependent_on_data(self, params, data):
+        """Returns parameters dependent on input."""
+        image = data["data"]
+        left_image = image["left"]
+        var = random.uniform(self.var_limit[0], self.var_limit[1])
+        sigma = var ** 0.5
+        random_state = np.random.RandomState(random.randint(0, 2 ** 32 - 1))
+
+        gauss_l = random_state.normal(self.mean, sigma, image.shape)
+        if self.asym():
+            right_image = image["right"]
+            var = random.uniform(self.var_limit[0], self.var_limit[1])
+            sigma = var ** 0.5
+            random_state = np.random.RandomState(
+                random.randint(0, 2 ** 32 - 1))
+
+            gauss_r = random_state.normal(self.mean, sigma, image.shape)
+        else:
+            gauss_r = gauss_l
+
+        return {
+            "guass_l": gauss_l,
+            "guass_r": gauss_r
+        }
+
+    def get_params_dependent_on_targets(self, params):
+        #just in case the targets is nessaccery
+        return {}
+
+"""
     def get_params_dependent_on_targets(self, params):
 
         image = params["left"]
@@ -388,6 +476,7 @@ class GaussNoiseStereo(StereoTransformAsym, GaussNoise):
         else:
             gauss_r = gauss_l
         return {"gauss_l": gauss_l, "gauss_r": gauss_r}
+"""
 
 
 class RGBShiftStereo(StereoTransformAsym, RGBShift):
@@ -414,13 +503,7 @@ class RGBShiftStereo(StereoTransformAsym, RGBShift):
         RGBShift.__init__(self, r_shift_limit, g_shift_limit,
                           b_shift_limit, always_apply, p)
 
-    def apply_l(self, image, r_shift_l=0, g_shift_l=0, b_shift_l=0, **params):
-        return F.shift_rgb(image, r_shift_l, g_shift_l, b_shift_l)
-
-    def apply_r(self, image, r_shift_r=0, g_shift_r=0, b_shift_r=0, **params):
-        return F.shift_rgb(image, r_shift_r, g_shift_r, b_shift_r)
-
-    def get_params_dependent_on_targets(self, params):
+    def get_params(self):
         r_shift_l = random.uniform(
             self.r_shift_limit[0], self.r_shift_limit[1])
         g_shift_l = random.uniform(
@@ -449,6 +532,16 @@ class RGBShiftStereo(StereoTransformAsym, RGBShift):
             "b_shift_r": b_shift_r,
         }
 
+    def apply_l(self, image, r_shift_l=0, g_shift_l=0, b_shift_l=0, **params):
+        #this apply shuold be the class RGBShift in lib albumentations
+        return self.apply(image, np.array([r_shift_l, g_shift_l, b_shift_l]))
+
+    def apply_r(self, image, r_shift_r=0, g_shift_r=0, b_shift_r=0, **params):
+        return self.apply(image, np.array([r_shift_r, g_shift_r, b_shift_r]))
+
+    def get_params_dependent_on_targets(self, params):
+        return {}
+
 
 class RandomBrightnessContrastStereo(StereoTransformAsym, RandomBrightnessContrast):
     """Randomly change brightness and contrast of the input image.
@@ -468,6 +561,7 @@ class RandomBrightnessContrastStereo(StereoTransformAsym, RandomBrightnessContra
     Image types:
         uint8, float32
     """
+    
 
     def __init__(self, brightness_limit=0.1, contrast_limit=0.1, brightness_by_max=True, always_apply=False, p=0.5,
                  p_asym=0.2):
@@ -476,12 +570,12 @@ class RandomBrightnessContrastStereo(StereoTransformAsym, RandomBrightnessContra
             self, brightness_limit, contrast_limit, brightness_by_max, always_apply, p)
 
     def apply_l(self, img, alpha_l=1.0, beta_l=0.0, **params):
-        return F.brightness_contrast_adjust(img, alpha_l, beta_l, self.brightness_by_max)
+        return brightness_contrast_adjust(img, alpha_l, beta_l, self.brightness_by_max)
 
     def apply_r(self, img, alpha_r=1.0, beta_r=0.0, **params):
-        return F.brightness_contrast_adjust(img, alpha_r, beta_r, self.brightness_by_max)
+        return brightness_contrast_adjust(img, alpha_r, beta_r, self.brightness_by_max)
 
-    def get_params_dependent_on_targets(self, params):
+    def get_params(self):
         alpha_l = 1.0 + \
             random.uniform(self.contrast_limit[0], self.contrast_limit[1])
         beta_l = 0.0 + \
@@ -504,6 +598,8 @@ class RandomBrightnessContrastStereo(StereoTransformAsym, RandomBrightnessContra
             "beta_r": beta_r,
         }
 
+    def get_params_dependent_on_targets(self, params):
+        return {}
 
 """
 Right Image Only

@@ -278,7 +278,7 @@ def main(args):
                             prev_best, checkpoint_saver, True)
 
     # save final model
-    save_checkpoint(epoch, model, optimizer,
+    save_checkpoint(epoch, model, optimizer, lr_scheduler,
                     prev_best, checkpoint_saver, False)
 
     return

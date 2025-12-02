@@ -66,7 +66,7 @@ class KITTIBaseDataset(data.Dataset):
             self.transformation = Compose([
                 RGBShiftStereo(always_apply=True, p_asym=0.5),
                 RandomBrightnessContrastStereo(always_apply=True, p_asym=0.5)
-            ])
+            ], strict=False)
         elif self.split == 'validation' or self.split == 'test' or self.split == 'validation_all':
             self.transformation = None
         else:
@@ -94,7 +94,7 @@ class KITTIBaseDataset(data.Dataset):
 
             disp = np.array(Image.open(disp_fname)).astype(np.float32) / 256.
             input_data['disp'] = disp
-            input_data['occ_mask'] = np.zeros_like(disp).astype(np.bool)
+            input_data['occ_mask'] = np.zeros_like(disp).astype(np.bool_)
 
             # if self.split == 'train':
             #     input_data = random_crop(200, 640, input_data, self.split)

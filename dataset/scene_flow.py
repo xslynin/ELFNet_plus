@@ -48,11 +48,11 @@ class SceneFlowSamplePackDataset(data.Dataset):
         input_data['right'] = right
 
         occ = np.array(Image.open(os.path.join(
-            path, self.occ_fold, self.data[idx]))).astype(np.bool)
+            path, self.occ_fold, self.data[idx]))).astype(np.bool_)
         input_data['occ_mask'] = occ
 
         occ_right = np.array(Image.open(os.path.join(
-            path, self.occ_fold_right, self.data[idx]))).astype(np.bool)
+            path, self.occ_fold_right, self.data[idx]))).astype(np.bool_)
         input_data['occ_mask_right'] = occ_right
 
         disp, _ = readPFM(os.path.join(
@@ -135,8 +135,8 @@ class SceneFlowFlyingThingsDataset(data.Dataset):
             right_fname)).astype(np.uint8)[..., :3]
 
         occ_right_fname = self.occ_data[idx].replace('left', 'right')
-        occ_left = np.array(Image.open(self.occ_data[idx])).astype(np.bool)
-        occ_right = np.array(Image.open(occ_right_fname)).astype(np.bool)
+        occ_left = np.array(Image.open(self.occ_data[idx])).astype(np.bool_)
+        occ_right = np.array(Image.open(occ_right_fname)).astype(np.bool_)
 
         disp_left_fname = left_fname.replace(
             'frames_finalpass', 'disparity').replace('.png', '.pfm')
@@ -216,8 +216,8 @@ class SceneFlowMonkaaDataset(data.Dataset):
 
         occ_left_fname = left_fname.replace('frames_cleanpass', 'occlusion')
         occ_right_fname = right_fname.replace('frames_cleanpass', 'occlusion')
-        occ_left = np.array(Image.open(occ_left_fname)).astype(np.bool)
-        occ_right = np.array(Image.open(occ_right_fname)).astype(np.bool)
+        occ_left = np.array(Image.open(occ_left_fname)).astype(np.bool_)
+        occ_right = np.array(Image.open(occ_right_fname)).astype(np.bool_)
 
         result['occ_mask'] = occ_left
         result['occ_mask_right'] = occ_right
